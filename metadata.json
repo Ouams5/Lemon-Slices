@@ -1,0 +1,7 @@
+{
+  "name": "Lemon Slices",
+  "description": "A revolutionary AI-powered presentation app featuring Neo-Brutalism aesthetics and a comprehensive suite of generative tools.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}
