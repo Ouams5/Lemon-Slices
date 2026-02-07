@@ -14,7 +14,7 @@ export const Toolbar: React.FC<ToolbarProps> = ({ onAddComponent, onOpenExtensio
   return (
     <div className="
         md:w-20 md:h-full md:border-r-2 md:border-t-0 md:flex-col
-        w-full h-16 border-t-2 border-obsidian flex-row fixed bottom-0 left-0 bg-white z-50
+        w-full h-16 border-t-2 border-obsidian flex-row bg-white
         flex items-center justify-center md:justify-start md:py-6 gap-2 md:gap-6 shrink-0
     ">
       {/* Logo only on Desktop Sidebar */}

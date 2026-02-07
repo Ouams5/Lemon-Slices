@@ -1,18 +1,19 @@
 import React, { useRef, useState, useEffect } from 'react';
-import { Slide, SlideComponent, ChartDataPoint, PollOption } from '../types';
+import { Slide, SlideComponent, ChartDataPoint, PollOption, AnimationConfig } from '../types';
 import { Trash2, GripHorizontal, Plus, X, BarChart3, Vote, Image as ImageIcon, Box } from 'lucide-react';
 import { Button } from '../Button';
 import { DraggableWindow } from './DraggableWindow';
 
 interface SlideCanvasProps {
   slide: Slide;
-  selectedIds: string[]; // Changed to array
+  selectedIds: string[];
   onSelect: (id: string | null) => void;
   onMultiSelect: (ids: string[]) => void;
   onUpdateComponent: (id: string, updates: Partial<SlideComponent>) => void;
   onDeleteComponent: (id: string) => void;
   onUpdateMultiple: (updates: Partial<SlideComponent>) => void;
-  previewTrigger?: number; // timestamp to force re-render/replay animations
+  previewTrigger?: number;
+  readOnly?: boolean; // New prop for Present Mode
 }
 
 // Markdown Display
@@ -69,27 +70,130 @@ const MarkdownRenderer: React.FC<{ content: string; font: string; textColor: str
 };
 
 // Chart Visualizer
-const ChartVisualizer: React.FC<{ data?: ChartDataPoint[], font: string, textColor: string }> = ({ data, font, textColor }) => {
+const ChartVisualizer: React.FC<{ 
+    data?: ChartDataPoint[], 
+    font: string, 
+    textColor: string,
+    animation?: AnimationConfig,
+    trigger?: number
+}> = ({ data, font, textColor, animation, trigger }) => {
+    const [progress, setProgress] = useState(1);
+    
+    useEffect(() => {
+        if (!animation) {
+            setProgress(1);
+            return;
+        }
+
+        const isChartAnim = animation.name.startsWith('chart');
+        if (!isChartAnim) {
+            setProgress(1);
+            return;
+        }
+
+        setProgress(0);
+        let start: number | null = null;
+        let reqId: number;
+        const duration = (animation.duration || 1) * 1000;
+
+        const loop = (time: number) => {
+            if (!start) start = time;
+            const elapsed = time - start;
+            const p = Math.min(1, elapsed / duration);
+            setProgress(p);
+            if (p < 1) {
+                reqId = requestAnimationFrame(loop);
+            }
+        };
+        reqId = requestAnimationFrame(loop);
+        
+        return () => cancelAnimationFrame(reqId);
+    }, [animation, trigger]);
+
     if (!data || data.length === 0) return <div className="w-full h-full flex items-center justify-center text-gray-400 font-mono text-xs">NO DATA</div>;
     
     const maxVal = Math.max(...data.map(d => d.value));
 
+    const getBarStyle = (index: number, val: number) => {
+        if (!animation || progress === 1) return { height: `${(val / maxVal) * 80}%`, opacity: 1, transform: 'none' };
+        
+        const type = animation.name;
+        const baseHeight = (val / maxVal) * 80;
+
+        if (type === 'chartGrowUp') return { height: `${baseHeight * progress}%`, opacity: 1 };
+        
+        if (type === 'chartElastic') {
+             const backOut = (t: number) => { const s = 1.70158; return --t * t * ((s + 1) * t + s) + 1; };
+             return { height: `${baseHeight * backOut(progress)}%`, opacity: 1 };
+        }
+
+        if (type === 'chartStagger') {
+            const delay = index * 0.1;
+            const localProgress = Math.max(0, Math.min(1, (progress - delay) * 2)); 
+            return { height: `${baseHeight}%`, opacity: localProgress, transform: `translateY(${20 * (1-localProgress)}px)` };
+        }
+        
+        if (type === 'chartWave') {
+             const delay = index * 0.15;
+             const localP = Math.max(0, Math.min(1, (progress - delay) * 1.5));
+             return { height: `${baseHeight * localP}%`, opacity: 1 };
+        }
+        
+        if (type === 'chartDrop') {
+             const easeOutBounce = (x: number): number => {
+                const n1 = 7.5625;
+                const d1 = 2.75;
+                if (x < 1 / d1) { return n1 * x * x; } else if (x < 2 / d1) { return n1 * (x -= 1.5 / d1) * x + 0.75; } else if (x < 2.5 / d1) { return n1 * (x -= 2.25 / d1) * x + 0.9375; } else { return n1 * (x -= 2.625 / d1) * x + 0.984375; }
+             };
+             return { height: `${baseHeight}%`, transformOrigin: 'bottom', transform: `translateY(${-200 * (1-easeOutBounce(progress))}%)`, opacity: progress > 0.1 ? 1 : 0 };
+        }
+
+        if (type === 'chartCenter') {
+             return { height: `${baseHeight}%`, transform: `scaleY(${progress})`, transformOrigin: 'center', opacity: 1 };
+        }
+
+        if (type === 'chartWipe') {
+             const screenP = index / data.length;
+             const isVisible = progress > screenP;
+             return { height: `${baseHeight}%`, opacity: isVisible ? 1 : 0, transition: 'opacity 0.2s' };
+        }
+
+        if (type === 'chartPop') {
+             return { height: `${baseHeight}%`, transform: `scale(${progress})`, transformOrigin: 'bottom center', opacity: progress };
+        }
+
+        return { height: `${baseHeight}%`, opacity: 1 };
+    };
+
+    const getDisplayValue = (val: number) => {
+        if (!animation || progress === 1) return val;
+        if (animation.name === 'chartGrowUp' || animation.name === 'chartElastic') {
+            return Math.floor(val * progress);
+        }
+        return val;
+    };
+
     return (
         <div className="w-full h-full p-4 flex flex-col justify-end">
              <div className="flex items-end justify-around h-full gap-2">
-                 {data.map((d, i) => (
-                     <div key={i} className="flex flex-col items-center flex-1 h-full justify-end group">
-                         <div className="text-[10px] font-bold mb-1 opacity-0 group-hover:opacity-100 transition-opacity" style={{ color: textColor }}>{d.value}</div>
-                         <div 
-                            className="w-full bg-lemon border border-obsidian hover:bg-lemon/80 transition-all relative"
-                            style={{ 
-                                height: `${(d.value / maxVal) * 80}%`, 
-                                backgroundColor: d.color || '#DFFF00'
-                            }}
-                         ></div>
-                         <div className={`text-[10px] mt-2 truncate max-w-full text-center font-${font}`} style={{ color: textColor }}>{d.label}</div>
-                     </div>
-                 ))}
+                 {data.map((d, i) => {
+                     const style = getBarStyle(i, d.value);
+                     return (
+                         <div key={i} className="flex flex-col items-center flex-1 h-full justify-end group">
+                             <div className="text-[10px] font-bold mb-1 transition-opacity" style={{ color: textColor, opacity: progress === 1 ? 0 : 1, groupHoverOpacity: 1 }}>
+                                 {getDisplayValue(d.value)}
+                             </div>
+                             <div 
+                                className="w-full bg-lemon border border-obsidian hover:bg-lemon/80 relative origin-bottom"
+                                style={{ 
+                                    backgroundColor: d.color || '#DFFF00',
+                                    ...style
+                                }}
+                             ></div>
+                             <div className={`text-[10px] mt-2 truncate max-w-full text-center font-${font}`} style={{ color: textColor, opacity: style.opacity }}>{d.label}</div>
+                         </div>
+                     );
+                 })}
              </div>
         </div>
     );
@@ -125,12 +229,13 @@ const PollVisualizer: React.FC<{ question?: string, options?: PollOption[], font
 export const SlideCanvas: React.FC<SlideCanvasProps> = ({ 
   slide, 
   selectedIds, 
-  onSelect,
+  onSelect, 
   onMultiSelect,
   onUpdateComponent,
   onDeleteComponent,
   onUpdateMultiple,
-  previewTrigger = 0
+  previewTrigger = 0,
+  readOnly = false
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const [scale, setScale] = useState(1);
@@ -154,7 +259,8 @@ export const SlideCanvas: React.FC<SlideCanvasProps> = ({
       if (containerRef.current) {
         const parent = containerRef.current.parentElement;
         if (parent) {
-          const availableWidth = parent.clientWidth - 40; 
+          // Adjust scale calculation based on readOnly (Present Mode might need different logic)
+          const availableWidth = parent.clientWidth - (readOnly ? 0 : 40); 
           const baseWidth = 1000; 
           const newScale = Math.min(1, availableWidth / baseWidth);
           setScale(newScale);
@@ -164,26 +270,21 @@ export const SlideCanvas: React.FC<SlideCanvasProps> = ({
     window.addEventListener('resize', handleResize);
     handleResize(); 
     return () => window.removeEventListener('resize', handleResize);
-  }, []);
+  }, [readOnly]);
   
-  // Replay animations when previewTrigger changes
   useEffect(() => {
-      if(previewTrigger > 0) {
+      if(previewTrigger > 0 || readOnly) {
           setPlayAnimations(false);
-          // Small timeout to reset CSS animations
           const t = setTimeout(() => setPlayAnimations(true), 50);
           return () => clearTimeout(t);
       }
-  }, [previewTrigger]);
+  }, [previewTrigger, readOnly]);
 
-  // --- Helper: Parse Position ---
   const parsePos = (comp: SlideComponent) => {
       const parentW = 1000;
       const parentH = 562.5;
-
       let left = 0;
       let top = 0;
-
       const styleLeft = comp.style?.left || '0';
       const styleTop = comp.style?.top || '0';
 
@@ -198,59 +299,43 @@ export const SlideCanvas: React.FC<SlideCanvasProps> = ({
       } else {
           top = parseFloat(styleTop as string) || 0;
       }
-
       return { left, top };
   };
 
-  // --- Drag Logic ---
   const handleDragStart = (e: React.MouseEvent | React.TouchEvent, id: string) => {
-    if (editingId === id || resizingId === id) return;
+    if (readOnly || editingId === id || resizingId === id) return;
     
-    // Group Selection Logic & Shift Key
     const isShift = (e as React.MouseEvent).shiftKey;
     const clickedComp = slide.components.find(c => c.id === id);
-    
-    // Check if component is in a group
     let idsToSelect = [id];
     if (clickedComp?.groupId) {
         idsToSelect = slide.components.filter(c => c.groupId === clickedComp.groupId).map(c => c.id);
     }
 
-    // Update Selection State
     if (isShift) {
-        // Toggle if shift
         const newSelection = selectedIds.includes(id) 
             ? selectedIds.filter(sid => !idsToSelect.includes(sid))
             : [...selectedIds, ...idsToSelect];
         onMultiSelect(newSelection);
-        // Don't drag immediately on shift-click usually, but we will allow it here if already selected
         if (!selectedIds.includes(id)) return; 
     } else {
-        // If clicking an unselected item, select only it (or its group)
         if (!selectedIds.includes(id)) {
             onMultiSelect(idsToSelect);
         }
-        // If clicking an ALREADY selected item, keep selection to allow drag
     }
 
     e.stopPropagation();
-    
     const clientX = 'touches' in e ? e.touches[0].clientX : (e as React.MouseEvent).clientX;
     const clientY = 'touches' in e ? e.touches[0].clientY : (e as React.MouseEvent).clientY;
-    
     setDragStartPos({ x: clientX, y: clientY });
     setIsDragging(true);
 
-    // Capture initial positions of ALL selected items
     const initials: Record<string, { top: number, left: number }> = {};
-    
     const activeIds = (!isShift && !selectedIds.includes(id)) ? idsToSelect : selectedIds;
 
     activeIds.forEach(sid => {
         const comp = slide.components.find(c => c.id === sid);
-        if (comp) {
-            initials[sid] = parsePos(comp);
-        }
+        if (comp) initials[sid] = parsePos(comp);
     });
     setInitialPositions(initials);
   };
@@ -261,7 +346,6 @@ export const SlideCanvas: React.FC<SlideCanvasProps> = ({
       if (!isDragging) return;
       const clientX = 'touches' in e ? e.touches[0].clientX : (e as MouseEvent).clientX;
       const clientY = 'touches' in e ? e.touches[0].clientY : (e as MouseEvent).clientY;
-      
       setCurrentDragDelta({
           x: (clientX - dragStartPos.x) / scale,
           y: (clientY - dragStartPos.y) / scale
@@ -270,12 +354,10 @@ export const SlideCanvas: React.FC<SlideCanvasProps> = ({
 
   const onDragEnd = () => {
       if (isDragging) {
-          // Commit changes
           Object.keys(initialPositions).forEach(id => {
               const init = initialPositions[id];
               const newLeft = init.left + currentDragDelta.x;
               const newTop = init.top + currentDragDelta.y;
-              
               const pctLeft = (newLeft / 1000) * 100;
               const pctTop = (newTop / 562.5) * 100;
 
@@ -293,8 +375,8 @@ export const SlideCanvas: React.FC<SlideCanvasProps> = ({
       setInitialPositions({});
   };
 
-  // --- Resize Logic ---
   const handleResizeStart = (e: React.MouseEvent, id: string, handle: string) => {
+      if(readOnly) return;
       e.stopPropagation();
       e.preventDefault();
       setResizingId(id);
@@ -302,12 +384,9 @@ export const SlideCanvas: React.FC<SlideCanvasProps> = ({
       
       const comp = slide.components.find(c => c.id === id);
       const el = (e.target as HTMLElement).closest('.slide-component') as HTMLElement;
-      
       if (comp && el) {
-          // Get computed pixel values
           const rect = el.getBoundingClientRect();
           const containerRect = containerRef.current?.getBoundingClientRect();
-          
           if (containerRect) {
               setInitialResizeState({
                   x: e.clientX,
@@ -323,10 +402,8 @@ export const SlideCanvas: React.FC<SlideCanvasProps> = ({
 
   const handleResizeMove = (e: MouseEvent) => {
       if (!resizingId || !initialResizeState || !resizeHandle) return;
-      
       const dx = (e.clientX - initialResizeState.x) / scale;
       const dy = (e.clientY - initialResizeState.y) / scale;
-      
       let newW = initialResizeState.w;
       let newH = initialResizeState.h;
       let newL = initialResizeState.l;
@@ -337,7 +414,6 @@ export const SlideCanvas: React.FC<SlideCanvasProps> = ({
       if (resizeHandle.includes('s')) newH = initialResizeState.h + dy;
       if (resizeHandle.includes('n')) { newH = initialResizeState.h - dy; newT = initialResizeState.t + dy; }
 
-      // Min dimensions
       if (newW < 20) newW = 20;
       if (newH < 20) newH = 20;
 
@@ -389,6 +465,9 @@ export const SlideCanvas: React.FC<SlideCanvasProps> = ({
 
 
   const handleDoubleClick = (id: string) => {
+      if (readOnly) return;
+      const comp = slide.components.find(c => c.id === id);
+      if (comp?.type === 'custom' && !comp.customType) return;
       setEditingId(id);
   };
 
@@ -396,13 +475,11 @@ export const SlideCanvas: React.FC<SlideCanvasProps> = ({
     let left = comp.style?.left || '0%';
     let top = comp.style?.top || '0%';
     
-    // Apply Drag Delta if moving
     if (isDragging && initialPositions[comp.id]) {
         left = `${initialPositions[comp.id].left + currentDragDelta.x}px`;
         top = `${initialPositions[comp.id].top + currentDragDelta.y}px`;
     }
 
-    // Apply Effects
     const effectsStyle: React.CSSProperties = {};
     if (comp.effects) {
         const { shadow, outline, opacity, blur } = comp.effects;
@@ -420,19 +497,12 @@ export const SlideCanvas: React.FC<SlideCanvasProps> = ({
         }
     }
     
-    // Apply Animations (Better Animations Extension)
-    if (comp.animation && (playAnimations || previewTrigger > 0)) {
+    const isChartAnim = comp.animation && comp.animation.name.startsWith('chart');
+    if (!isChartAnim && comp.animation && (playAnimations || previewTrigger > 0 || readOnly)) {
         effectsStyle.animationName = comp.animation.name;
         effectsStyle.animationDuration = `${comp.animation.duration}s`;
         effectsStyle.animationDelay = `${comp.animation.delay}s`;
-        effectsStyle.animationFillMode = 'both'; // important to keep state before/after
-        // If not playing, we might want to ensure they are visible or in end state?
-        // Actually if not playing, remove animation props so they appear static in final position?
-        // But for entrances, final position is visible.
-    } else if (comp.animation && !playAnimations && previewTrigger === 0) {
-        // When editing normally, show elements without animation (so they aren't hidden by delay)
-        // Unless it's an entrance animation that hides initially...
-        // For simplicity in editor, we show them.
+        effectsStyle.animationFillMode = 'both'; 
     }
 
     return { 
@@ -445,42 +515,90 @@ export const SlideCanvas: React.FC<SlideCanvasProps> = ({
     };
   };
 
-  // Determine Contrast color
   const bgColor = slide.backgroundColor || '#ffffff';
   const isDark = bgColor.match(/^#(?:[0-9a-fA-F]{3}){1,2}$/) ? (parseInt(bgColor.substring(1, 3), 16) * 299 + parseInt(bgColor.substring(3, 5), 16) * 587 + parseInt(bgColor.substring(5, 7), 16) * 114) / 1000 < 128 : false;
   const slideTextColor = isDark ? '#ffffff' : '#000000';
-
-  const animClass = slide.transition ? `animate-${slide.transition}` : '';
+  const animClass = slide.transition && readOnly ? `animate-${slide.transition}` : '';
 
   return (
     <div 
-        className="w-full h-full flex items-center justify-center bg-paper overflow-hidden relative touch-none"
-        onClick={() => { onSelect(null); setEditingId(null); }}
+        className={`w-full h-full flex items-center justify-center overflow-hidden relative touch-none ${readOnly ? 'bg-transparent' : 'bg-paper'}`}
+        onClick={() => { if(!readOnly) { onSelect(null); setEditingId(null); } }}
     >
-      <div className="absolute inset-0 opacity-10 pointer-events-none" 
-           style={{ backgroundImage: 'radial-gradient(#000 1px, transparent 1px)', backgroundSize: '20px 20px' }}>
-      </div>
+      {!readOnly && (
+          <div className="absolute inset-0 opacity-10 pointer-events-none" 
+               style={{ backgroundImage: 'radial-gradient(#000 1px, transparent 1px)', backgroundSize: '20px 20px' }}>
+          </div>
+      )}
       
-      {/* Draggable Editor Overlay */}
-      {editingId && (
+      {editingId && !readOnly && (
           (() => {
               const comp = slide.components.find(c => c.id === editingId);
               if (!comp) return null;
 
-              if (comp.type === 'custom') {
-                   return (
-                      <DraggableWindow title="Edit HTML Plugin" onClose={() => setEditingId(null)} className="w-80 h-64">
-                          <div className="p-4 flex flex-col gap-2 h-full">
-                              <label className="text-[10px] font-bold">RAW HTML CONTENT</label>
-                              <textarea 
-                                className="border p-1 w-full text-xs font-mono h-full resize-none" 
-                                value={comp.content || ''} 
-                                onChange={(e) => onUpdateComponent(comp.id, { content: e.target.value })}
-                              />
-                              <p className="text-[8px] text-gray-400">Warning: HTML content is rendered directly.</p>
-                          </div>
-                      </DraggableWindow>
-                   );
+              if (comp.type === 'custom' && comp.customType) {
+                   const rawContent = comp.content || '';
+                   if (['neo-note', 'neo-badge', 'neo-circle'].includes(comp.customType)) {
+                       const matches = rawContent.match(/(<div[^>]*>)(.*)(<\/div>)/);
+                       const currentText = matches ? matches[2] : '';
+                       const prefix = matches ? matches[1] : '';
+                       const suffix = matches ? matches[3] : '';
+                       if (!matches) return null;
+
+                       return (
+                           <DraggableWindow title={`Edit ${comp.customType.split('-')[1]}`} onClose={() => setEditingId(null)} className="w-64 h-32">
+                               <div className="p-4 flex flex-col gap-2">
+                                   <label className="text-[10px] font-bold">TEXT CONTENT</label>
+                                   <input 
+                                       className="border p-2 w-full text-sm font-bold"
+                                       autoFocus
+                                       value={currentText}
+                                       onChange={(e) => {
+                                           const newContent = `${prefix}${e.target.value}${suffix}`;
+                                           onUpdateComponent(comp.id, { content: newContent });
+                                       }}
+                                   />
+                               </div>
+                           </DraggableWindow>
+                       );
+                   }
+                   if (comp.customType === 'neo-card') {
+                        const cardMatches = rawContent.match(/(<div[^>]*>)\s*<h3>(.*?)<\/h3>\s*<p>(.*?)<\/p>\s*(<\/div>)/);
+                        if (!cardMatches) return null;
+                        const prefix = cardMatches[1];
+                        const title = cardMatches[2];
+                        const body = cardMatches[3];
+                        const suffix = cardMatches[4];
+
+                        return (
+                           <DraggableWindow title="Edit Card" onClose={() => setEditingId(null)} className="w-72 h-64">
+                               <div className="p-4 flex flex-col gap-3">
+                                   <div>
+                                       <label className="text-[10px] font-bold block mb-1">TITLE</label>
+                                       <input 
+                                           className="border p-2 w-full text-sm font-bold"
+                                           value={title}
+                                           onChange={(e) => {
+                                               const newContent = `${prefix}<h3>${e.target.value}</h3><p>${body}</p>${suffix}`;
+                                               onUpdateComponent(comp.id, { content: newContent });
+                                           }}
+                                       />
+                                   </div>
+                                   <div>
+                                       <label className="text-[10px] font-bold block mb-1">CONTENT</label>
+                                       <textarea 
+                                           className="border p-2 w-full text-xs h-24 resize-none"
+                                           value={body}
+                                           onChange={(e) => {
+                                               const newContent = `${prefix}<h3>${title}</h3><p>${e.target.value}</p>${suffix}`;
+                                               onUpdateComponent(comp.id, { content: newContent });
+                                           }}
+                                       />
+                                   </div>
+                               </div>
+                           </DraggableWindow>
+                       );
+                   }
               }
 
               if (comp.type === 'chart') {
@@ -584,38 +702,37 @@ export const SlideCanvas: React.FC<SlideCanvasProps> = ({
           color: slideTextColor
         }}
         ref={containerRef}
-        className={`border-2 border-obsidian shadow-hard relative shrink-0 transition-transform duration-75 ${animClass}`}
+        className={`${!readOnly ? 'border-2 border-obsidian shadow-hard' : ''} relative shrink-0 transition-transform duration-75 ${animClass}`}
       >
-        <div className="absolute bottom-4 right-6 font-display font-bold opacity-10 text-6xl select-none pointer-events-none z-0" style={{ color: slideTextColor }}>
-            0{slide.slide_number}
-        </div>
+        {!readOnly && (
+            <div className="absolute bottom-4 right-6 font-display font-bold opacity-10 text-6xl select-none pointer-events-none z-0" style={{ color: slideTextColor }}>
+                0{slide.slide_number}
+            </div>
+        )}
 
         {slide.components.map((comp) => {
             const isSelected = selectedIds.includes(comp.id);
             const isEditing = editingId === comp.id;
             const style = getRenderStyle(comp);
-            
-            // Resolve component specific text color or fallback to slide text color
             const compTextColor = comp.textColor || slideTextColor;
 
             return (
                 <div
                     key={comp.id}
-                    className={`slide-component absolute ${!isEditing ? 'cursor-move select-none' : ''} ${isSelected && !isEditing ? 'ring-2 ring-lemon ring-offset-2' : 'hover:border-2 hover:border-gray-200/50'}`}
-                    style={style}
+                    className={`slide-component absolute ${(!isEditing && !readOnly) ? 'cursor-move select-none' : ''} ${(isSelected && !isEditing && !readOnly) ? 'ring-2 ring-lemon ring-offset-2' : ((!readOnly && !isEditing) ? 'hover:border-2 hover:border-gray-200/50' : '')}`}
+                    style={{...style, minWidth: '20px', minHeight: '20px'}}
                     onMouseDown={(e) => handleDragStart(e, comp.id)}
                     onTouchStart={(e) => handleDragStart(e, comp.id)}
                     onClick={(e) => { 
-                        e.stopPropagation(); 
+                        if(!readOnly) e.stopPropagation(); 
                     }}
                     onDoubleClick={() => handleDoubleClick(comp.id)}
                 >
-                    {/* Visual Border for Selection (separate from CSS effect border) */}
-                    {isSelected && !isEditing && (
+                    {isSelected && !isEditing && !readOnly && (
                          <div className="absolute inset-0 border-2 border-dashed border-obsidian pointer-events-none z-50"></div>
                     )}
 
-                    {isSelected && !isEditing && (
+                    {isSelected && !isEditing && !readOnly && (
                         <div 
                             className="absolute -top-10 right-0 bg-red-500 text-white p-1.5 rounded cursor-pointer hover:bg-red-600 shadow-md z-50 pointer-events-auto"
                             onClick={(e) => { e.stopPropagation(); onDeleteComponent(comp.id); }}
@@ -626,7 +743,7 @@ export const SlideCanvas: React.FC<SlideCanvasProps> = ({
                     )}
 
                     {comp.type === 'text' && (
-                        isEditing ? (
+                        isEditing && !readOnly ? (
                             <textarea
                                 autoFocus
                                 className="w-full h-full bg-transparent border-none outline-none resize-none"
@@ -666,7 +783,13 @@ export const SlideCanvas: React.FC<SlideCanvasProps> = ({
 
                     {comp.type === 'chart' && (
                         <div className="w-full h-full pointer-events-none">
-                            <ChartVisualizer data={comp.chartData} font={comp.fontFamily || 'sans'} textColor={compTextColor} />
+                            <ChartVisualizer 
+                                data={comp.chartData} 
+                                font={comp.fontFamily || 'sans'} 
+                                textColor={compTextColor} 
+                                animation={comp.animation}
+                                trigger={playAnimations || previewTrigger > 0 || readOnly ? previewTrigger || Date.now() : 0}
+                            />
                         </div>
                     )}
 
@@ -680,9 +803,8 @@ export const SlideCanvas: React.FC<SlideCanvasProps> = ({
                         <div className="w-full h-full pointer-events-none overflow-hidden" dangerouslySetInnerHTML={{ __html: comp.content || '' }}></div>
                     )}
 
-                    {isSelected && !isEditing && (
+                    {isSelected && !isEditing && !readOnly && (
                         <>
-                            {/* Resize Handles */}
                             {['nw', 'ne', 'sw', 'se'].map(h => (
                                 <div 
                                     key={h}
@@ -702,9 +824,11 @@ export const SlideCanvas: React.FC<SlideCanvasProps> = ({
         })}
       </div>
       
-      <div className="absolute bottom-2 left-2 text-[10px] text-gray-400 font-mono pointer-events-none">
-          Double click to Edit | Shift+Click to Group Select | Drag handles to resize | Scale: {Math.round(scale * 100)}%
-      </div>
+      {!readOnly && (
+          <div className="absolute bottom-2 left-2 text-[10px] text-gray-400 font-mono pointer-events-none">
+              Double click to Edit | Shift+Click to Group Select | Drag handles to resize | Scale: {Math.round(scale * 100)}%
+          </div>
+      )}
     </div>
   );
 };

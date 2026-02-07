@@ -60,7 +60,7 @@ export interface AnimationConfig {
 export interface LogicBlock {
     id: string;
     type: string;
-    params: Record<string, any>;
+    params: Record<string, any>; // Values can be literal or "{{varName}}"
     children?: LogicBlock[]; // For nesting (Scratch-like)
 }
 
@@ -116,6 +116,9 @@ export interface SlideComponent {
   textColor?: string;
   backgroundColor?: string; // For component background
   isGradient?: boolean;
+
+  // New field for identifying custom element sub-types
+  customType?: string; 
 }
 
 export interface SlideAnimation {

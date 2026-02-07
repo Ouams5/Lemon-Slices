@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
 
 interface DraggableWindowProps {
@@ -69,7 +70,7 @@ export const DraggableWindow: React.FC<DraggableWindowProps> = ({
         };
     }, [isDragging]);
 
-    return (
+    const windowContent = (
         <div 
             className={`fixed z-[9999] bg-white border-2 border-obsidian shadow-hard flex flex-col ${className}`}
             style={{ top: pos.y, left: pos.x }}
@@ -90,4 +91,6 @@ export const DraggableWindow: React.FC<DraggableWindowProps> = ({
             </div>
         </div>
     );
+
+    return createPortal(windowContent, document.body);
 };
